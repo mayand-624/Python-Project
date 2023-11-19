@@ -1,0 +1,79 @@
+import cv2  #  Library for image processing.
+import pickle  #  For serializing and de-serializing a python object structure.
+import cvzone  #  Makes image processing and AI tools easy to run.
+import numpy as np  #  To perfom operations on arrays.
+from plyer import notification  #  To send a notification to the user for avaliable parking space.
+
+cap = cv2.VideoCapture('carPark.mp4')  #  Loading the video of the parking lot.
+with open('CarParkPos', 'rb') as f:
+    poslist = pickle.load(f)
+width, height = 107, 48
+prev_space_counter = -1  # Initialize to an impossible value
+prev_occupied_spaces = []  # Initialize to an empty list
+
+def checkParkingSpace(imgPro):  #  To check for avaliable parking spaces.
+    spaceCounter = 0
+    available_spaces = []  # List to store the available space positions
+    occupied_spaces = []   # List to store the occupied space positions
+    for i, pos in enumerate(poslist):
+        x, y = pos
+        imgCrop = imgPro[y:y+height, x:x+width]
+        count = cv2.countNonZero(imgCrop)
+        if count < 950:
+            color = (0, 255, 0)
+            thickness = 5
+            spaceCounter += 1
+            available_spaces.append(str(i + 1))  # Store the available space number
+        else:
+            color = (0, 0, 255)
+            thickness = 2
+            occupied_spaces.append(str(i + 1))  # Store the occupied space number
+        cv2.rectangle(img, pos, (pos[0] + width, pos[1] + height), color, thickness)
+        cvzone.putTextRect(img, str(count), (x, y + height - 3), scale=1, thickness=2, offset=0, colorR=color)
+    cvzone.putTextRect(img, f'Free:{spaceCounter}/{len(poslist)}', (100, 50), scale=3, thickness=5, offset=20,
+                       colorR=(0, 200, 0))
+
+    return spaceCounter, available_spaces, occupied_spaces
+
+while True:
+    if cap.get(cv2.CAP_PROP_POS_FRAMES) == cap.get(cv2.CAP_PROP_FRAME_COUNT):
+        break  #Exit the loop if all frames have been processed(stop the video after running it once)
+        #cap.set(cv2.CAP_PROP_POS_FRAMES, 0) #-> (In case we don't want to stop the video after running it once)
+    success, img = cap.read()
+    imgGrey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    imgBlur = cv2.GaussianBlur(imgGrey, (3, 3), 1)
+    imgThreshold = cv2.adaptiveThreshold(imgBlur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                         cv2.THRESH_BINARY_INV, 25, 16)
+    imgMedian = cv2.medianBlur(imgThreshold, 5)
+    kernel = np.ones((3, 3), np.uint8)
+    imDialate = cv2.dilate(imgMedian, kernel, iterations=1)
+    current_space_counter, available_spaces, occupied_spaces = checkParkingSpace(imDialate)
+
+    if current_space_counter != prev_space_counter:  #  To send a notification to the user for avaliable parking space.
+        if available_spaces:
+            notification_text = (f'Parking Space Available: {current_space_counter}/{len(poslist)}\nAvailable Spaces: '
+                                 f'{", ".join(available_spaces)}')
+        else:
+            notification_text = f'All parking spaces are occupied'
+        notification.notify(
+            title='Parking Status',
+            message=notification_text,
+            timeout=10  # Adjust the timeout as needed
+        )
+
+    # Check for freed up spaces
+    freed_up_spaces = set(prev_occupied_spaces) - set(occupied_spaces)
+    if freed_up_spaces:
+        notification_text = f'Parking Space Freed Up: {", ".join(freed_up_spaces)}'
+        notification.notify(
+            title='Parking Status',
+            message=notification_text,
+            timeout=10  # Adjust the timeout as needed
+        )
+
+    prev_space_counter = current_space_counter
+    prev_occupied_spaces = occupied_spaces
+
+    cv2.imshow("Image", img)
+    cv2.imshow("Imagethresh", imgThreshold)
+    cv2.waitKey(10)
